@@ -10,8 +10,11 @@ class HelloHandler(BaseHTTPRequestHandler):
 
         self.send_response(200)
         self.send_header("Content-type", "text/plain")
+        self.send_header("Connection", "FooHeader")
+        self.send_header("FooHeader", "bar")
+        self.send_header("Proxy-Connection", "keep-alive")
         self.end_headers()
-        self.wfile.write(b"Hello World\n")
+        self.wfile.write(b"Hello from backend\n")
 
     def do_POST(self):
         self.send_response(200)

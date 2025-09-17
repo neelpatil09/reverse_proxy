@@ -1,13 +1,11 @@
 package org.handler.common;
 
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.handler.codec.http.FullHttpRequest;
-import io.netty.handler.codec.http.HttpHeaderNames;
-import io.netty.handler.codec.http.HttpHeaders;
+import io.netty.handler.codec.http.*;
 
 import java.net.InetSocketAddress;
 
-public class RequestHeaderUtil {
+public class RequestUtil {
     private static final CharSequence[] HOP_BY_HOP = {
             HttpHeaderNames.CONNECTION,
             HttpHeaderNames.KEEP_ALIVE,
@@ -50,6 +48,14 @@ public class RequestHeaderUtil {
         HttpHeaders headers = req.headers();
         removeHopByHopHeaders(headers);
         setForwardingHeaders(ctx, headers);
+    }
+
+    public static void upgradeToHTTP1_1(HttpMessage msg) {
+        msg.headers().set(
+                HttpHeaderNames.CONNECTION,
+                HttpUtil.isKeepAlive(msg) ? HttpHeaderValues.KEEP_ALIVE : HttpHeaderValues.CLOSE
+        );
+        msg.setProtocolVersion(HttpVersion.HTTP_1_1);
     }
 
 }

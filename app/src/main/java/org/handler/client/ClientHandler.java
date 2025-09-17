@@ -7,7 +7,7 @@ import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.http.*;
 import org.handler.common.ErrorResponseUtil;
-import org.handler.common.RequestHeaderUtil;
+import org.handler.common.RequestUtil;
 import org.handler.upstream.UpstreamHandlerInitializer;
 
 
@@ -66,12 +66,14 @@ public class ClientHandler extends SimpleChannelInboundHandler<FullHttpRequest> 
             }
         }
 
+        if(req.protocolVersion().equals(HttpVersion.HTTP_1_0)) RequestUtil.upgradeToHTTP1_1(req);
+
         Bootstrap be = new Bootstrap()
                 .group(inbound.eventLoop())
                 .channel(NioSocketChannel.class)
                 .handler(new UpstreamHandlerInitializer(inbound, keepAlive));
 
-        RequestHeaderUtil.sanitizeAndForwardHeaders(req, ctx);
+        RequestUtil.sanitizeAndForwardHeaders(req, ctx);
         FullHttpRequest copy = req.retain();
         be.connect(new InetSocketAddress(upstreamHost,upstreamPort))
                 .addListener((ChannelFutureListener) cf -> {
