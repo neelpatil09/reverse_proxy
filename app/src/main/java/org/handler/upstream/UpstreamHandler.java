@@ -20,7 +20,7 @@ public class UpstreamHandler extends SimpleChannelInboundHandler<FullHttpRespons
     }
 
     @Override
-    protected void channelRead0(ChannelHandlerContext ctx, FullHttpResponse msg) throws Exception {
+    protected void channelRead0(ChannelHandlerContext ctx, FullHttpResponse msg) {
         if (keepAlive) HttpUtil.setKeepAlive(msg, true);
         RequestHeaderUtil.removeHopByHopHeaders(msg.headers());
         clientChannel.writeAndFlush(msg.retain())
@@ -28,5 +28,11 @@ public class UpstreamHandler extends SimpleChannelInboundHandler<FullHttpRespons
                     if (!keepAlive) clientChannel.close();
                 });
 
+    }
+
+    @Override
+    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+        cause.printStackTrace();
+        ctx.close();
     }
 }
