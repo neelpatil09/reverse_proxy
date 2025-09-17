@@ -34,7 +34,7 @@ public class ClientHandler extends SimpleChannelInboundHandler<FullHttpRequest> 
     }
 
     @Override
-    protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest req){
+    protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest req) throws URISyntaxException {
         Channel inbound = ctx.channel();
         boolean keepAlive = HttpUtil.isKeepAlive(req);
         HttpMethod method = req.method();
@@ -44,36 +44,19 @@ public class ClientHandler extends SimpleChannelInboundHandler<FullHttpRequest> 
             return;
         }
 
-        String uri = req.uri();
-        if (uri.startsWith("http://") || uri.startsWith("https://")) {
-            System.out.println("Processing absolute URI: " + uri);
-            try {
-                URI parsed = new URI(uri);
-
-                String path = parsed.getRawPath();
-                if (parsed.getRawQuery() != null) {
-                    path += "?" + parsed.getRawQuery();
-                }
-                req.setUri(path);
-
-                String hostHeader = parsed.getHost() +
-                        (parsed.getPort() != -1 ? ":" + parsed.getPort() : "");
-                req.headers().set(HttpHeaderNames.HOST, hostHeader);
-
-            } catch (URISyntaxException e) {
-                ErrorResponseUtil.sendBadRequest(inbound, uri);
-                return;
-            }
+        if(HttpUtil.is100ContinueExpected(req)){
+            ctx.writeAndFlush(new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.CONTINUE));
         }
 
+        generateOriginFormURI(req, inbound);
         if(req.protocolVersion().equals(HttpVersion.HTTP_1_0)) RequestUtil.upgradeToHTTP1_1(req);
+        RequestUtil.sanitizeAndForwardHeaders(req, ctx);
 
         Bootstrap be = new Bootstrap()
                 .group(inbound.eventLoop())
                 .channel(NioSocketChannel.class)
                 .handler(new UpstreamHandlerInitializer(inbound, keepAlive));
 
-        RequestUtil.sanitizeAndForwardHeaders(req, ctx);
         FullHttpRequest copy = req.retain();
         be.connect(new InetSocketAddress(upstreamHost,upstreamPort))
                 .addListener((ChannelFutureListener) cf -> {
@@ -94,5 +77,28 @@ public class ClientHandler extends SimpleChannelInboundHandler<FullHttpRequest> 
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
         cause.printStackTrace();
         ctx.close();
+    }
+
+    private void generateOriginFormURI(FullHttpRequest req, Channel inbound) throws URISyntaxException {
+        String uri = req.uri();
+        if (uri.startsWith("http://") || uri.startsWith("https://")) {
+            try {
+                URI parsed = new URI(uri);
+
+                String path = parsed.getRawPath();
+                if (parsed.getRawQuery() != null) {
+                    path += "?" + parsed.getRawQuery();
+                }
+                req.setUri(path);
+
+                String hostHeader = parsed.getHost() +
+                        (parsed.getPort() != -1 ? ":" + parsed.getPort() : "");
+                req.headers().set(HttpHeaderNames.HOST, hostHeader);
+
+            } catch (URISyntaxException e) {
+                ErrorResponseUtil.sendBadRequest(inbound, uri);
+            }
+        }
+
     }
 }
