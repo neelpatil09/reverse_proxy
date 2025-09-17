@@ -6,6 +6,7 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.handler.codec.http.FullHttpResponse;
 import io.netty.handler.codec.http.HttpUtil;
+import org.handler.common.RequestHeaderUtil;
 
 public class UpstreamHandler extends SimpleChannelInboundHandler<FullHttpResponse> {
 
@@ -21,6 +22,7 @@ public class UpstreamHandler extends SimpleChannelInboundHandler<FullHttpRespons
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, FullHttpResponse msg) throws Exception {
         if (keepAlive) HttpUtil.setKeepAlive(msg, true);
+        RequestHeaderUtil.removeHopByHopHeaders(msg.headers());
         clientChannel.writeAndFlush(msg.retain())
                 .addListener((ChannelFutureListener) f -> {
                     if (!keepAlive) clientChannel.close();

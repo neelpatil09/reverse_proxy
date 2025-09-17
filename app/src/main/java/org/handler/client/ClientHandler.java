@@ -1,22 +1,32 @@
 package org.handler.client;
 import io.netty.bootstrap.Bootstrap;
-import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.http.*;
+import org.handler.common.ErrorResponseUtil;
+import org.handler.common.RequestHeaderUtil;
 import org.handler.upstream.UpstreamHandlerInitializer;
 
 
 import java.net.InetSocketAddress;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.Set;
 
 public class ClientHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
 
     private final String upstreamHost;
 
     private final int upstreamPort;
+
+    private static final Set<HttpMethod> ACCEPTED_METHODS = Set.of(
+            HttpMethod.GET, HttpMethod.POST, HttpMethod.PUT,
+            HttpMethod.DELETE, HttpMethod.HEAD, HttpMethod.OPTIONS,
+            HttpMethod.PATCH, HttpMethod.TRACE
+    );
 
     public ClientHandler(String upstreamHost, int upstreamPort) {
         this.upstreamHost = upstreamHost;
@@ -27,17 +37,46 @@ public class ClientHandler extends SimpleChannelInboundHandler<FullHttpRequest> 
     protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest req){
         Channel inbound = ctx.channel();
         boolean keepAlive = HttpUtil.isKeepAlive(req);
+        HttpMethod method = req.method();
+
+        if(!ACCEPTED_METHODS.contains(method)){
+            ErrorResponseUtil.sendNotImplemented(inbound, method.name());
+            return;
+        }
+
+        String uri = req.uri();
+        if (uri.startsWith("http://") || uri.startsWith("https://")) {
+            System.out.println("Processing absolute URI: " + uri);
+            try {
+                URI parsed = new URI(uri);
+
+                String path = parsed.getRawPath();
+                if (parsed.getRawQuery() != null) {
+                    path += "?" + parsed.getRawQuery();
+                }
+                req.setUri(path);
+
+                String hostHeader = parsed.getHost() +
+                        (parsed.getPort() != -1 ? ":" + parsed.getPort() : "");
+                req.headers().set(HttpHeaderNames.HOST, hostHeader);
+
+            } catch (URISyntaxException e) {
+                ErrorResponseUtil.sendBadRequest(inbound, uri);
+                return;
+            }
+        }
 
         Bootstrap be = new Bootstrap()
                 .group(inbound.eventLoop())
                 .channel(NioSocketChannel.class)
                 .handler(new UpstreamHandlerInitializer(inbound, keepAlive));
 
+        RequestHeaderUtil.sanitizeAndForwardHeaders(req, ctx);
         FullHttpRequest copy = req.retain();
         be.connect(new InetSocketAddress(upstreamHost,upstreamPort))
                 .addListener((ChannelFutureListener) cf -> {
                     if(!cf.isSuccess()){
-                        sendBadGateway(inbound, "Connection to upstream failed");
+                        ErrorResponseUtil.sendBadGateway(inbound, upstreamHost + ":" + upstreamPort);
                         return;
                     }
                     Channel outbound = cf.channel();
@@ -47,18 +86,6 @@ public class ClientHandler extends SimpleChannelInboundHandler<FullHttpRequest> 
                         if (outbound.isActive()) outbound.close();
                     });
                 });
-    }
-
-    private void sendBadGateway(Channel ch, String msg) {
-        if (!ch.isActive()) return;
-        FullHttpResponse resp = new DefaultFullHttpResponse(
-                HttpVersion.HTTP_1_1,
-                HttpResponseStatus.BAD_GATEWAY,
-                Unpooled.wrappedBuffer(("Bad Gateway: " + msg).getBytes())
-        );
-        resp.headers().set(HttpHeaderNames.CONTENT_TYPE, "text/plain; charset=utf-8");
-        resp.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, resp.content().readableBytes());
-        ch.writeAndFlush(resp).addListener(ChannelFutureListener.CLOSE);
     }
 
     @Override
