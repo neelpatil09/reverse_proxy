@@ -1,11 +1,10 @@
 package org.handler.client;
 import io.netty.bootstrap.Bootstrap;
-import io.netty.channel.Channel;
-import io.netty.channel.ChannelFutureListener;
-import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.SimpleChannelInboundHandler;
+import io.netty.channel.*;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.http.*;
+import io.netty.util.AttributeKey;
+import io.netty.util.ReferenceCountUtil;
 import org.handler.common.ErrorResponseUtil;
 import org.handler.common.RequestUtil;
 import org.handler.upstream.UpstreamHandlerInitializer;
@@ -14,13 +13,21 @@ import org.handler.upstream.UpstreamHandlerInitializer;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.util.ArrayDeque;
+import java.util.Queue;
 import java.util.Set;
 
-public class ClientHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
+public class ClientHandler extends ChannelInboundHandlerAdapter {
 
     private final String upstreamHost;
 
     private final int upstreamPort;
+
+    private static final AttributeKey<Channel> OUTBOUND_CHANNEL_KEY =
+            AttributeKey.valueOf("outboundChannel");
+
+    private static final AttributeKey<Queue<HttpContent>> PENDING_CONTENT =
+            AttributeKey.valueOf("pendingContent");
 
     private static final Set<HttpMethod> ACCEPTED_METHODS = Set.of(
             HttpMethod.GET, HttpMethod.POST, HttpMethod.PUT,
@@ -34,52 +41,82 @@ public class ClientHandler extends SimpleChannelInboundHandler<FullHttpRequest> 
     }
 
     @Override
-    protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest req) throws URISyntaxException {
+    public void channelRead(ChannelHandlerContext ctx, Object msg) throws URISyntaxException {
+
         Channel inbound = ctx.channel();
+
+        if(msg instanceof HttpRequest req){
+            System.out.println("request" + req);
+            handleHttpRequest(ctx, req, inbound);
+        } else if (msg instanceof HttpContent content) {
+            System.out.println("request" + content);
+            handleHttpContent(content, inbound);
+        }
+        else {
+            ctx.fireChannelRead(msg);
+        }
+    }
+
+    private void handleHttpRequest(ChannelHandlerContext ctx, HttpRequest req, Channel inbound) throws URISyntaxException {
         boolean keepAlive = HttpUtil.isKeepAlive(req);
         HttpMethod method = req.method();
-
         if(!ACCEPTED_METHODS.contains(method)){
             ErrorResponseUtil.sendNotImplemented(inbound, method.name());
             return;
-        }
-
-        if(HttpUtil.is100ContinueExpected(req)){
-            ctx.writeAndFlush(new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.CONTINUE));
         }
 
         generateOriginFormURI(req, inbound);
         if(req.protocolVersion().equals(HttpVersion.HTTP_1_0)) RequestUtil.upgradeToHTTP1_1(req);
         RequestUtil.sanitizeAndForwardHeaders(req, ctx);
 
+        inbound.attr(PENDING_CONTENT).set(new ArrayDeque<>());
+
         Bootstrap be = new Bootstrap()
                 .group(inbound.eventLoop())
                 .channel(NioSocketChannel.class)
                 .handler(new UpstreamHandlerInitializer(inbound, keepAlive));
 
-        FullHttpRequest copy = req.retain();
         be.connect(new InetSocketAddress(upstreamHost,upstreamPort))
                 .addListener((ChannelFutureListener) cf -> {
                     if(!cf.isSuccess()){
-                        ErrorResponseUtil.sendBadGateway(inbound, upstreamHost + ":" + upstreamPort);
+                        ErrorResponseUtil.sendBadGateway(inbound, " Request could not find Upstream for " + upstreamHost + ":" + upstreamPort);
                         return;
                     }
                     Channel outbound = cf.channel();
-                    copy.headers().set(HttpHeaderNames.HOST, upstreamHost + ":" + upstreamPort);
-                    outbound.writeAndFlush(copy);
+                    req.headers().set(HttpHeaderNames.HOST, upstreamHost + ":" + upstreamPort);
+
+                    outbound.writeAndFlush(req);
+
+                    Queue<HttpContent> pendingContent = inbound.attr(PENDING_CONTENT).getAndSet(null);
+                    if (pendingContent != null) {
+                        while(!pendingContent.isEmpty()){
+                            outbound.writeAndFlush(pendingContent.poll());
+                        }
+                    }
+
+                    inbound.attr(OUTBOUND_CHANNEL_KEY).set(outbound);
                     inbound.closeFuture().addListener((ChannelFutureListener) f -> {
                         if (outbound.isActive()) outbound.close();
                     });
                 });
     }
 
-    @Override
-    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-        cause.printStackTrace();
-        ctx.close();
+    private void handleHttpContent(HttpContent content, Channel inbound) {
+        Channel outbound = inbound.attr(OUTBOUND_CHANNEL_KEY).get();
+        if (outbound == null || !outbound.isActive()) {
+            Queue<HttpContent> pendingContent = inbound.attr(PENDING_CONTENT).get();
+            if (pendingContent != null) {
+                pendingContent.add(content.retain());
+            } else {
+                ReferenceCountUtil.release(content);
+                ErrorResponseUtil.sendBadGateway(inbound, " Chunked content lost Upstream for " + upstreamHost + ":" + upstreamPort);
+            }
+            return;
+        }
+        outbound.writeAndFlush(content.retain());
     }
 
-    private void generateOriginFormURI(FullHttpRequest req, Channel inbound) throws URISyntaxException {
+    private void generateOriginFormURI(HttpRequest req, Channel inbound) throws URISyntaxException {
         String uri = req.uri();
         if (uri.startsWith("http://") || uri.startsWith("https://")) {
             try {
@@ -100,5 +137,11 @@ public class ClientHandler extends SimpleChannelInboundHandler<FullHttpRequest> 
             }
         }
 
+    }
+
+    @Override
+    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+        cause.printStackTrace();
+        ctx.close();
     }
 }

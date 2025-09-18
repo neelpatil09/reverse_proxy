@@ -7,6 +7,7 @@ import io.netty.handler.codec.http.*;
 
 public final class ErrorResponseUtil {
 
+    public static final String BAD_CLIENT = "Client unavailable. Upstream:";
     public static final String BAD_GATEWAY_PREFIX = "Bad Gateway: ";
     public static final String BAD_REQUEST_PREFIX = "Bad Request: ";
     public static final String CONTENT_TYPE_TEXT = "text/plain; charset=utf-8";
@@ -17,6 +18,10 @@ public final class ErrorResponseUtil {
 
     public static void sendBadGateway(Channel ch, String gateway) {
         sendError(ch, HttpResponseStatus.BAD_GATEWAY, BAD_GATEWAY_PREFIX + gateway);
+    }
+
+    public static void sendBadClient(Channel ch) {
+        sendError(ch, HttpResponseStatus.SERVICE_UNAVAILABLE, BAD_CLIENT);
     }
 
     public static void sendBadRequest(Channel ch, String uri) {

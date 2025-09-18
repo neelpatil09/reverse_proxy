@@ -1,19 +1,23 @@
 package org.handler.upstream;
 
-import io.netty.channel.Channel;
-import io.netty.channel.ChannelFutureListener;
-import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.SimpleChannelInboundHandler;
-import io.netty.handler.codec.http.FullHttpResponse;
-import io.netty.handler.codec.http.HttpStatusClass;
-import io.netty.handler.codec.http.HttpVersion;
+import io.netty.channel.*;
+import io.netty.handler.codec.http.*;
+import io.netty.util.AttributeKey;
+import io.netty.util.ReferenceCountUtil;
+import org.handler.common.ErrorResponseUtil;
 import org.handler.common.RequestUtil;
 
-public class UpstreamHandler extends SimpleChannelInboundHandler<FullHttpResponse> {
+import java.util.ArrayDeque;
+import java.util.Queue;
+
+public class UpstreamHandler extends ChannelInboundHandlerAdapter {
 
     private final Channel clientChannel;
 
     private final boolean keepAlive;
+
+    private static final AttributeKey<Queue<HttpContent>> PENDING_CONTENT =
+            AttributeKey.valueOf("pendingContent");
 
     public UpstreamHandler(Channel clientChannel, boolean keepAlive) {
         this.clientChannel = clientChannel;
@@ -21,21 +25,52 @@ public class UpstreamHandler extends SimpleChannelInboundHandler<FullHttpRespons
     }
 
     @Override
-    protected void channelRead0(ChannelHandlerContext ctx, FullHttpResponse msg) {
+    public void channelRead(ChannelHandlerContext ctx, Object msg) {
+        if(msg instanceof HttpResponse resp){
+            handleHttpResponse(resp);
+        } else if (msg instanceof HttpContent content) {
+            handleHttpContent(content, clientChannel);
+        } else {
+            ctx.fireChannelRead(msg);
+        }
+    }
 
-        if (msg.status().codeClass() == HttpStatusClass.INFORMATIONAL) {
-            clientChannel.writeAndFlush(msg.retain());
+    private void handleHttpResponse(HttpResponse resp) {
+        if (resp.status().codeClass() == HttpStatusClass.INFORMATIONAL) {
+            clientChannel.writeAndFlush(resp);
             return;
         }
 
-        RequestUtil.removeHopByHopHeaders(msg.headers());
-        if(msg.protocolVersion().equals(HttpVersion.HTTP_1_0)) RequestUtil.upgradeToHTTP1_1(msg);
-
-        clientChannel.writeAndFlush(msg.retain())
+        RequestUtil.removeHopByHopHeaders(resp.headers());
+        if(resp.protocolVersion().equals(HttpVersion.HTTP_1_0)) RequestUtil.upgradeToHTTP1_1(resp);
+        clientChannel.attr(PENDING_CONTENT).set(new ArrayDeque<>());
+        clientChannel.writeAndFlush(resp)
                 .addListener((ChannelFutureListener) f -> {
                     if (!keepAlive) clientChannel.close();
                 });
 
+    }
+
+    private void handleHttpContent(HttpContent content, Channel clientChannel) {
+
+        if(!clientChannel.isActive()){
+            ReferenceCountUtil.release(content);
+            ErrorResponseUtil.sendBadClient(clientChannel);
+            return;
+        }
+
+        Queue<HttpContent> contentQueue = clientChannel.attr(PENDING_CONTENT).getAndSet(null);
+        if(contentQueue != null && !contentQueue.isEmpty()){
+            contentQueue.add(content.retain());
+            return;
+        }
+
+        clientChannel.writeAndFlush(content.retain())
+                .addListener((ChannelFutureListener) f -> {
+                    if (!keepAlive && content instanceof LastHttpContent) {
+                        clientChannel.close();
+                    }
+                });
     }
 
     @Override

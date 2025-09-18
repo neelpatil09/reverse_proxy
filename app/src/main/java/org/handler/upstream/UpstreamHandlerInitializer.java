@@ -4,7 +4,6 @@ import io.netty.channel.Channel;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.handler.codec.http.HttpClientCodec;
-import io.netty.handler.codec.http.HttpObjectAggregator;
 
 public class UpstreamHandlerInitializer extends ChannelInitializer<SocketChannel> {
 
@@ -20,7 +19,6 @@ public class UpstreamHandlerInitializer extends ChannelInitializer<SocketChannel
     @Override
     protected void initChannel(SocketChannel ch) {
         ch.pipeline().addLast(new HttpClientCodec());
-        ch.pipeline().addLast(new HttpObjectAggregator(Integer.MAX_VALUE));
         ch.pipeline().addLast(new UpstreamHandler(clientChannel, keepAlive));
     }
 }

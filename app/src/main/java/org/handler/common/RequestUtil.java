@@ -44,7 +44,7 @@ public class RequestUtil {
         }
     }
 
-    public static void sanitizeAndForwardHeaders(FullHttpRequest req, ChannelHandlerContext ctx) {
+    public static void sanitizeAndForwardHeaders(HttpRequest req, ChannelHandlerContext ctx) {
         HttpHeaders headers = req.headers();
         removeHopByHopHeaders(headers);
         setForwardingHeaders(ctx, headers);
