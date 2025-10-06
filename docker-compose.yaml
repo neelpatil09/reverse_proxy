@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  test-servers:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    container_name: test-servers
+    ports:
+      - "3000:3000"
+      - "3001:3001"
+    networks:
+      - proxy-net
+
+  reverse-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.proxy
+    container_name: reverse-proxy
+    ports:
+      - "8080:8080"
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    sysctls:
+      net.core.somaxconn: "65535"
+      net.ipv4.tcp_max_syn_backlog: "65535"
+      net.ipv4.tcp_fin_timeout: "15"
+      net.ipv4.tcp_tw_reuse: "1"
+      net.ipv4.ip_local_port_range: "1024 65000"
+    networks:
+      - proxy-net
+    environment:
+      - JAVA_OPTS=-Xms1G -Xmx2G -Dio.netty.eventLoopThreads=8 -Dio.netty.leakDetection.level=disabled
+      - UPSTREAM_IP=${UPSTREAM_IP}
+
+
+
+networks:
+  proxy-net:
+    driver: bridge
