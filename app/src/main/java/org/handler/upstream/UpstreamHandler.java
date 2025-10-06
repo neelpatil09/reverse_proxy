@@ -2,80 +2,90 @@ package org.handler.upstream;
 
 import io.netty.channel.*;
 import io.netty.handler.codec.http.*;
-import io.netty.util.AttributeKey;
 import io.netty.util.ReferenceCountUtil;
-import org.handler.common.ErrorResponseUtil;
+import org.handler.common.Attributes;
+import org.handler.common.Metrics;
 import org.handler.common.RequestUtil;
-
-import java.util.ArrayDeque;
-import java.util.Queue;
+import org.handler.pool.ConnectionPool;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class UpstreamHandler extends ChannelInboundHandlerAdapter {
 
-    private final Channel clientChannel;
+    private static final Logger log = LoggerFactory.getLogger(UpstreamHandler.class);
 
-    private final boolean keepAlive;
+    private final ConnectionPool pool;
 
-    private static final AttributeKey<Queue<HttpContent>> PENDING_CONTENT =
-            AttributeKey.valueOf("pendingContent");
-
-    public UpstreamHandler(Channel clientChannel, boolean keepAlive) {
-        this.clientChannel = clientChannel;
-        this.keepAlive = keepAlive;
+    public UpstreamHandler(ConnectionPool p) {
+        this.pool = p;
     }
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
-        if(msg instanceof HttpResponse resp){
-            handleHttpResponse(resp);
-        } else if (msg instanceof HttpContent content) {
-            handleHttpContent(content, clientChannel);
-        } else {
-            ctx.fireChannelRead(msg);
-        }
-    }
+        Channel up = ctx.channel();
+        Channel clientChannel = up.attr(Attributes.CLIENT_CHANNEL).get();
 
-    private void handleHttpResponse(HttpResponse resp) {
-        if (resp.status().codeClass() == HttpStatusClass.INFORMATIONAL) {
-            clientChannel.writeAndFlush(resp);
+        if(clientChannel == null || !clientChannel.isActive()){
+            ReferenceCountUtil.release(msg);
+            pool.discard(up);
             return;
         }
 
-        RequestUtil.removeHopByHopHeaders(resp.headers());
-        if(resp.protocolVersion().equals(HttpVersion.HTTP_1_0)) RequestUtil.upgradeToHTTP1_1(resp);
-        clientChannel.attr(PENDING_CONTENT).set(new ArrayDeque<>());
-        clientChannel.writeAndFlush(resp)
+        if (msg instanceof HttpResponse resp) {
+            RequestUtil.upgradeToHTTP1_1(resp);
+            RequestUtil.removeHopByHopHeaders(resp.headers());
+            boolean upKA = HttpUtil.isKeepAlive(resp);
+            up.attr(Attributes.UPSTREAM_KEEPALIVE).set(upKA);
+        }
+
+        clientChannel.writeAndFlush(ReferenceCountUtil.retain(msg))
                 .addListener((ChannelFutureListener) f -> {
-                    if (!keepAlive) clientChannel.close();
-                });
+                    if (!f.isSuccess()) {
+                        if (up.isActive()) pool.discard(up);
+                        if (clientChannel.isActive()) clientChannel.close();
+                        Metrics.recordError(clientChannel);
+                        return;
+                    }
+                    Long startTime = clientChannel.attr(Attributes.START_TIME).getAndSet(null);
+                    Boolean reused = clientChannel.attr(Attributes.REUSED_CONNECTION).getAndSet(null);
+                    if (startTime != null) {
+                        long latency = System.nanoTime() - startTime;
+                        Metrics.recordRequest(latency, reused != null && reused);
+                    }
 
-    }
+                    if (!(msg instanceof LastHttpContent)) {
+                        return;
+                    }
 
-    private void handleHttpContent(HttpContent content, Channel clientChannel) {
+                    clientChannel.attr(Attributes.CLIENT_BUSY).set(Boolean.FALSE);
 
-        if(!clientChannel.isActive()){
-            ReferenceCountUtil.release(content);
-            ErrorResponseUtil.sendBadClient(clientChannel);
-            return;
-        }
+                    boolean upstreamKA = Boolean.TRUE.equals(up.attr(Attributes.UPSTREAM_KEEPALIVE).get());
+                    if (upstreamKA) pool.release(up); else pool.discard(up);
 
-        Queue<HttpContent> contentQueue = clientChannel.attr(PENDING_CONTENT).getAndSet(null);
-        if(contentQueue != null && !contentQueue.isEmpty()){
-            contentQueue.add(content.retain());
-            return;
-        }
+                    clientChannel.attr(Attributes.OUTBOUND_CHANNEL).set(null);
 
-        clientChannel.writeAndFlush(content.retain())
-                .addListener((ChannelFutureListener) f -> {
-                    if (!keepAlive && content instanceof LastHttpContent) {
+                    boolean clientKA = Boolean.TRUE.equals(clientChannel.attr(Attributes.CLIENT_KEEPALIVE).get());
+                    if (!(clientKA && upstreamKA)) {
                         clientChannel.close();
                     }
                 });
+
+        ReferenceCountUtil.release(msg);
+    }
+
+    @Override
+    public void channelInactive(ChannelHandlerContext ctx) {
+        Channel upstream = ctx.channel();
+        Channel client = upstream.attr(Attributes.CLIENT_CHANNEL).get();
+        pool.discard(upstream);
+        if (client != null && client.isActive()) {
+            client.eventLoop().execute(client::close);
+        }
     }
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
         cause.printStackTrace();
-        ctx.close();
+        channelInactive(ctx);
     }
 }
