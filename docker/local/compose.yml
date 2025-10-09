@@ -1,0 +1,22 @@
+services:
+  reverse-proxy:
+    build:
+      context: ../..
+      dockerfile: docker/local/Dockerfile.proxy
+    container_name: reverse-proxy
+    network_mode: "host"
+    depends_on:
+      - test-servers
+    environment:
+      - ENV=local
+    command: ["java", "-jar", "app.jar"]
+
+  test-servers:
+    build:
+      context: ../..
+      dockerfile: docker/local/Dockerfile.test
+    container_name: test-servers
+    network_mode: "host"
+    environment:
+      - ENV=local
+    command: ["java", "-jar", "testserver.jar"]

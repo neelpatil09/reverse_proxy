@@ -1,0 +1,10 @@
+FROM python:3.11-slim
+WORKDIR /locust
+
+RUN pip install --no-cache-dir locust==2.31.1
+COPY ./locust/locustfile.py .
+
+ENV LOCUST_MODE=worker
+ENV LOCUST_MASTER_HOST=locust-master
+
+CMD ["sh", "-c", "locust -f locustfile.py --worker --master-host=$LOCUST_MASTER_HOST"]

@@ -1,5 +1,0 @@
-FROM eclipse-temurin:21-jre
-WORKDIR /app
-COPY app/build/libs/test-servers.jar app.jar
-EXPOSE 3000 3001
-ENTRYPOINT ["java", "-jar", "app.jar"]

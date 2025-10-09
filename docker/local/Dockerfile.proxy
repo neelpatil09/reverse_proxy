@@ -1,0 +1,10 @@
+FROM eclipse-temurin:21-jdk AS build
+WORKDIR /build
+COPY . .
+RUN ./gradlew :app:fatJar --no-daemon
+
+FROM eclipse-temurin:21-jdk
+WORKDIR /app
+COPY --from=build /build/app/build/libs/app.jar app.jar
+EXPOSE 8080
+ENTRYPOINT ["java","-jar","app.jar"]

@@ -8,7 +8,7 @@ import static org.junit.Assert.*;
 
 public class ReverseProxyTest {
     @Test public void appHasAGreeting() {
-        ReverseProxy classUnderTest = new ReverseProxy(8080);
+        ReverseProxy classUnderTest = new ReverseProxy(8080, 60000, 300000);
 //        assertNotNull("app should have a greeting", classUnderTest.getGreeting());
     }
 }
