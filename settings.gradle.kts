@@ -3,4 +3,4 @@ plugins {
 }
 
 rootProject.name = "reverse_proxy"
-include("app")
+include("app", "testserver")

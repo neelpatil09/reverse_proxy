@@ -1,0 +1,10 @@
+FROM eclipse-temurin:21-jdk AS build
+WORKDIR /build
+COPY . .
+RUN ./gradlew :testserver:fatJar --no-daemon
+
+FROM eclipse-temurin:21-jdk
+WORKDIR /app
+COPY --from=build /build/testserver/build/libs/testserver.jar testserver.jar
+EXPOSE 3000 3001
+ENTRYPOINT ["java","-jar","testserver.jar"]
