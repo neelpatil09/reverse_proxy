@@ -1,6 +1,6 @@
 resource "google_compute_instance" "upstream" {
   name         = "upstream-vm"
-  machine_type = "e2-small" #""e2-highcpu-8"
+  machine_type = "e2-highcpu-2"
   zone         = var.zone
   tags         = ["upstream", "ssh-iap"]
   allow_stopping_for_update = true
@@ -8,25 +8,23 @@ resource "google_compute_instance" "upstream" {
   network_interface {
     subnetwork         = google_compute_subnetwork.perf_private.name
     subnetwork_project = var.project_id
-
-    network_ip = google_compute_address.upstream_ip.address
-
-    access_config {}
+    network_ip          = google_compute_address.upstream_ip.address
   }
 
   boot_disk {
     initialize_params {
       image  = "ubuntu-os-cloud/ubuntu-2204-lts"
       size   = 50
-      type   = "pd-balanced"
+      type   = "pd-ssd"
     }
   }
 
   metadata_startup_script = file("${path.module}/scripts/upstream_startup.sh")
 
   labels = {
-    role = "upstream"
-    env  = "perf"
+    role  = "upstream"
+    env   = "perf"
+    tuned = "true"
   }
 
   metadata = {
@@ -41,7 +39,10 @@ resource "google_compute_instance" "upstream" {
 
   service_account {
     email  = google_service_account.vm_sa.email
-    scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+    scopes = [
+      "https://www.googleapis.com/auth/cloud-platform",
+      "https://www.googleapis.com/auth/monitoring.write"
+    ]
   }
 
   depends_on = [
@@ -49,5 +50,4 @@ resource "google_compute_instance" "upstream" {
     google_compute_subnetwork.perf_private,
     google_compute_address.upstream_ip
   ]
-
 }

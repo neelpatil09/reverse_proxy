@@ -1,6 +1,6 @@
 resource "google_compute_instance" "proxy" {
   name         = "proxy-vm"
-  machine_type = "e2-small" #""e2-highcpu-8"
+  machine_type = "c3-highcpu-8"
   zone         = var.zone
   tags         = ["proxy", "ssh-iap"]
   allow_stopping_for_update = true
@@ -8,29 +8,33 @@ resource "google_compute_instance" "proxy" {
   network_interface {
     subnetwork         = google_compute_subnetwork.perf_private.name
     subnetwork_project = var.project_id
-
-    network_ip = google_compute_address.proxy_ip.address
-
-    access_config {}
+    network_ip          = google_compute_address.proxy_ip.address
   }
 
   boot_disk {
     initialize_params {
       image  = "ubuntu-os-cloud/ubuntu-2204-lts"
-      size   = 50
-      type   = "pd-balanced"
+      size   = 100
+      type   = "pd-ssd"
     }
   }
+
+  # advanced_machine_features {
+  #   threads_per_core = 1
+  #   visible_core_count = 4
+  # }
 
   metadata_startup_script = file("${path.module}/scripts/proxy_startup.sh")
 
   labels = {
-    role = "proxy"
-    env  = "perf"
+    role  = "proxy"
+    env   = "perf"
+    tuned = "true"
   }
 
   metadata = {
-    enable-oslogin = "TRUE"
+    enable-oslogin   = "TRUE"
+    startup-status   = "tuned-highcpu"
   }
 
   shielded_instance_config {
@@ -41,7 +45,10 @@ resource "google_compute_instance" "proxy" {
 
   service_account {
     email  = google_service_account.vm_sa.email
-    scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+    scopes = [
+      "https://www.googleapis.com/auth/cloud-platform",
+      "https://www.googleapis.com/auth/monitoring.write"
+    ]
   }
 
   depends_on = [
@@ -49,5 +56,4 @@ resource "google_compute_instance" "proxy" {
     google_compute_subnetwork.perf_private,
     google_compute_address.proxy_ip
   ]
-
 }

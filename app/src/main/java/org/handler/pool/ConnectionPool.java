@@ -68,7 +68,7 @@ public class ConnectionPool {
      */
     private final HashMap<String, Bucket> buckets = new HashMap<>();
     private final EventExecutor poolExecutor;
-    private final int maxConnections = 1000;
+    private final int maxConnections = 10000;
     private final Long maxIdle, maxLife;
     private static final Logger log = LoggerFactory.getLogger(ConnectionPool.class);
 
@@ -90,9 +90,9 @@ public class ConnectionPool {
             /*
              * Check for idle connections
              */
-            while(!b.idle.isEmpty()){
+            while (!b.idle.isEmpty()) {
                 Channel up = b.idle.pollFirst();
-                if(up.isActive()){
+                if (up.isActive()) {
                     up.eventLoop().execute(() -> {
                         checkoutChannel(up, ctx.channel());
                         clientEL.execute(() -> {
@@ -107,13 +107,13 @@ public class ConnectionPool {
             /*
              * Create new connection if possible
              */
-            if(b.active + b.inFlight < maxConnections){
+            if (b.active + b.inFlight < maxConnections) {
                 b.active++; b.inFlight++;
                 ChannelFuture cf = connector.get();
                 cf.addListener((ChannelFutureListener) f -> {
                     poolExecutor.execute(() -> {
                         b.inFlight--;
-                        if (!f.isSuccess()){
+                        if (!f.isSuccess()) {
                             b.active--;
                             clientEL.execute(() -> promise.setFailure(f.cause()));
                             Metrics.recordError(ctx.channel());
@@ -122,27 +122,24 @@ public class ConnectionPool {
                         Channel up = f.channel();
                         registerCloseListener(up);
 
-                        // oldest pending waiter, enqueue
+                        // Serve oldest pending waiter if present
                         while (!b.pending.isEmpty()) {
                             PendingRequest pend = b.pending.pollFirst();
                             Channel waiter = pend.ctx.channel();
                             if (waiter != null && waiter.isActive()) {
-                                enqueuePending(key, ctx, promise);
-                                up.eventLoop().execute(() ->
-                                {
-                                    checkoutNewChannel(up, key, waiter);
-                                });
+                                up.eventLoop().execute(() -> checkoutNewChannel(up, key, waiter));
                                 waiter.eventLoop().execute(() -> pend.ready.setSuccess(up));
                                 Metrics.connectionCreated();
-                                Metrics.pendingAdded();
                                 Metrics.pendingRemoved();
                                 return;
                             } else {
+                                // dead/closed waiter — fail its promise and continue
                                 pend.ready.tryFailure(new ClosedChannelException());
+                                Metrics.pendingRemoved(); // ✅ ensure accounting stays correct
                             }
                         }
 
-                        // no pending waiters, match with caller
+                        // No pending waiters — match with caller
                         up.eventLoop().execute(() -> checkoutNewChannel(up, key, ctx.channel()));
                         clientEL.execute(() -> promise.setSuccess(up));
                         Metrics.connectionCreated();
@@ -210,19 +207,19 @@ public class ConnectionPool {
             poolExecutor.execute(() -> {
                 Bucket b = buckets.get(key);
                 if (b == null) { up.eventLoop().execute(up::close); return; }
-                while(!b.pending.isEmpty()){
+                while (!b.pending.isEmpty()) {
                     PendingRequest pr = b.pending.poll();
                     Channel client = pr.ctx.channel();
-                    if(client != null && client.isActive()){
+                    if (client != null && client.isActive()) {
                         up.eventLoop().execute(() -> {
                             checkoutChannel(up, client);
                             client.eventLoop().execute(() -> pr.ready.setSuccess(up));
                         });
                         Metrics.pendingRemoved();
                         return;
-                    }
-                    else{
+                    } else {
                         pr.ready.tryFailure(new ClosedChannelException());
+                        Metrics.pendingRemoved();
                         Metrics.recordError(client);
                     }
                 }
@@ -282,11 +279,24 @@ public class ConnectionPool {
             promise.setFailure(new ClosedChannelException());
             return;
         }
-        b.pending.addLast(new PendingRequest(ctx, promise));
+        PendingRequest pr = new PendingRequest(ctx, promise);
+        b.pending.addLast(pr);
+
+        // Remove from pending if the client channel closes
         ctx.channel().closeFuture().addListener(f ->
                 poolExecutor.execute(() -> removePendingIfPresent(key, promise))
         );
+
+        // Also remove if the caller cancels/times out the promise before fulfillment
+        promise.addListener((Future<? super Channel> f) ->
+                poolExecutor.execute(() -> {
+                    if (!f.isSuccess()) { // cancelled/failed before success
+                        removePendingIfPresent(key, promise);
+                    }
+                })
+        );
     }
+
 
     private void registerCloseListener(Channel up) {
         up.closeFuture().addListener(f -> poolExecutor.execute(() -> {

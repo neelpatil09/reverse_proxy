@@ -73,3 +73,21 @@ resource "google_compute_firewall" "iap_to_locust_ui" {
 
   description = "Allow IAP TCP forwarding to Locust UI on port 8089"
 }
+
+resource "google_compute_firewall" "locust_internal" {
+  name    = "allow-locust-internal-5557-5558"
+  network = google_compute_network.perf_vpc.id
+
+  direction = "INGRESS"
+  priority  = 1000
+
+  source_tags = ["locust-worker"]
+  target_tags = ["locust-master"]
+
+  allow {
+    protocol = "tcp"
+    ports    = ["5557-5558"]
+  }
+
+  description = "Allow Locust master-worker internal communication on 5557–5558"
+}

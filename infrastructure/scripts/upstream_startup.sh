@@ -10,7 +10,18 @@ cat <<EOF | sudo tee /etc/sysctl.d/99-upstream.conf
 net.core.somaxconn = 65535
 net.ipv4.ip_local_port_range = 1024 65535
 fs.file-max = 2097152
+
+net.core.rmem_max = 67108864
+net.core.wmem_max = 67108864
+net.ipv4.tcp_rmem = 4096 87380 67108864
+net.ipv4.tcp_wmem = 4096 65536 67108864
+
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_fin_timeout = 10
+
+net.ipv4.tcp_congestion_control = bbr
 EOF
+
 sudo sysctl --system
 
 cat <<EOF | sudo tee -a /etc/security/limits.conf
@@ -19,7 +30,21 @@ cat <<EOF | sudo tee -a /etc/security/limits.conf
 EOF
 
 sudo apt-get update -y
-sudo apt-get install -y ca-certificates curl gnupg lsb-release docker.io
+sudo apt-get install -y ca-certificates curl gnupg lsb-release docker.io ethtool
+
+if command -v ethtool &>/dev/null; then
+  sudo ethtool -L eth0 combined 8 || true
+  for f in /sys/class/net/eth0/queues/rx-*; do
+    echo ffffffff | sudo tee "$f/rps_cpus" || true
+  done
+fi
+
+if command -v cpupower &>/dev/null; then
+  sudo cpupower frequency-set -g performance || true
+else
+  echo "install cpupower for CPU tuning"
+fi
+
 sudo systemctl enable docker
 sudo systemctl start docker
 
@@ -28,6 +53,10 @@ sudo docker pull "${IMAGE}"
 
 sudo docker rm -f upstream || true
 
-sudo docker run -d --name upstream --network host --ulimit nofile=1048576:1048576 "${IMAGE}"
+sudo docker run -d \
+  --name upstream \
+  --network host \
+  --ulimit nofile=1048576:1048576 \
+  "${IMAGE}"
 
 echo "Upstream container launched successfully (host networking, ports 3000/3001)."

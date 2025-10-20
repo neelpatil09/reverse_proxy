@@ -1,6 +1,6 @@
 /*
     * Variables for GCP infrastructure
- */
+*/
 variable "project_id" {
   description = "GCP project ID"
   type        = string
@@ -21,7 +21,7 @@ variable "zone" {
 
 /*
     * Networking + OS Login
- */
+*/
 variable "vpc_name" {
   description = "VPC name"
   type        = string
@@ -38,4 +38,12 @@ variable "subnet_cidr" {
   description = "CIDR for the private subnet"
   type        = string
   default     = "10.10.0.0/20"
+}
+
+/*
+    * Locust configuration
+*/
+variable "locust_worker_count" {
+  type    = number
+  default = 2
 }
