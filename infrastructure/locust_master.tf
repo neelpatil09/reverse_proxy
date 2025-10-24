@@ -1,6 +1,6 @@
 resource "google_compute_instance" "locust_master" {
   name         = "locust-master-vm"
-  machine_type = "e2-medium"
+  machine_type = "e2-highcpu-2"
   zone         = var.zone
   tags         = ["locust-master", "ssh-iap"]
   allow_stopping_for_update = true

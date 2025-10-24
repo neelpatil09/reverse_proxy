@@ -1,6 +1,6 @@
 resource "google_compute_instance" "proxy" {
   name         = "proxy-vm"
-  machine_type = "c3-highcpu-8"
+  machine_type = "n2-highcpu-16"
   zone         = var.zone
   tags         = ["proxy", "ssh-iap"]
   allow_stopping_for_update = true

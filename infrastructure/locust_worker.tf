@@ -1,7 +1,7 @@
 resource "google_compute_instance" "locust_worker" {
   count        = var.locust_worker_count
   name         = "locust-worker-${count.index}"
-  machine_type = "c3-highcpu-8"
+  machine_type = "c3-highcpu-4"
   zone         = var.zone
   tags         = ["locust-worker", "ssh-iap"]
   allow_stopping_for_update = true

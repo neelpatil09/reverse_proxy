@@ -45,5 +45,5 @@ variable "subnet_cidr" {
 */
 variable "locust_worker_count" {
   type    = number
-  default = 2
+  default = 3
 }

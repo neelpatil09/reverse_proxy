@@ -12,7 +12,7 @@ public final class HostPort {
 
     public static HostPort from(HttpRequest req) {
         if (req.method().equals(HttpMethod.CONNECT)) {
-            return parseAuthority(req.uri(), 443); // default to 443 for CONNECT
+            return parseAuthority(req.uri(), 443);
         }
 
         try {
@@ -46,7 +46,7 @@ public final class HostPort {
             }
         }
         int colon = authority.lastIndexOf(':');
-        if (colon > 0 && authority.indexOf(':') == colon) { // only one colon
+        if (colon > 0 && authority.indexOf(':') == colon) {
             String host = authority.substring(0, colon);
             int port = parsePort(authority.substring(colon + 1), defaultPort);
             return new HostPort(host, port);

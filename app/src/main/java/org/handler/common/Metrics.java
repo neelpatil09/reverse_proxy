@@ -18,13 +18,11 @@ public final class Metrics {
     private static final LongAdder pendingAdded = new LongAdder();
     private static final LongAdder pendingRemoved = new LongAdder();
 
-    // Timestamps for rate calculation
     private static final AtomicLong lastDumpTime = new AtomicLong(System.nanoTime());
     private static final AtomicLong lastDumpTotalRequests = new AtomicLong();
 
     private Metrics() {}
 
-    // === Connection lifecycle ===
     public static void connectionCreated() {
         createdConnections.increment();
         activeConnections.incrementAndGet();
@@ -39,7 +37,6 @@ public final class Metrics {
         reusedConnections.increment();
     }
 
-    // === Requests ===
     public static void recordRequest(long latencyNanos, boolean reused) {
         totalRequests.increment();
         totalLatencyNanos.add(latencyNanos);

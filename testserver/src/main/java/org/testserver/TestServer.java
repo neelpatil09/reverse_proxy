@@ -23,15 +23,23 @@ public class TestServer {
                             @Override
                             protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest req) {
                                 String content;
-                                if ("/slow".equals(req.uri())) {
-                                    try { Thread.sleep(2000); } catch (InterruptedException ignored) {}
-                                    content = "slow hello from " + port;
-                                } else if ("/close".equals(req.uri())) {
-                                    content = "closing from " + port;
-                                } else {
-                                    content = "hello world from " + port;
+                                switch (req.uri()) {
+                                    case "/slow":
+                                        try { Thread.sleep(2000); } catch (InterruptedException ignored) {}
+                                        content = "slow hello from " + port;
+                                        break;
+                                    case "/close":
+                                        content = "closing from " + port;
+                                        break;
+                                    case "/large":
+                                        int size = 1024 * 1024;
+                                        byte[] bytes = new byte[size];
+                                        for (int i = 0; i < size; i++) bytes[i] = 'A';
+                                        content = new String(bytes);
+                                        break;
+                                    default:
+                                        content = "hello world from " + port;
                                 }
-
                                 boolean keepAlive = HttpUtil.isKeepAlive(req) && !"/close".equals(req.uri());
                                 FullHttpResponse resp = new DefaultFullHttpResponse(
                                         req.protocolVersion(),
@@ -67,7 +75,6 @@ public class TestServer {
         Channel ch1 = start(3000, boss, worker);
         Channel ch2 = start(3001, boss, worker);
 
-        // Add shutdown hook for graceful cleanup
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             System.out.println("Shutting down test servers...");
             ch1.close();
